@@ -1,0 +1,484 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Chessy Ultimate: Full Engine</title>
+    <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+    <style>
+        :root { 
+            --cell: 65px; 
+            --gold: #f1c40f; 
+            --white: #dee3e6; 
+            --black: #8ca2ad;
+            --bg: #1a1a1a;
+        }
+        body { background: var(--bg); color: white; font-family: 'Segoe UI', sans-serif; margin: 0; display: flex; flex-direction: column; align-items: center; }
+
+        /* МЕНЮ */
+        #main-menu {
+            position: fixed; inset: 0; background: var(--bg); z-index: 1000;
+            display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 15px;
+        }
+        .btn {
+            width: 300px; padding: 15px; border: none; border-radius: 8px; font-size: 16px;
+            font-weight: bold; cursor: pointer; transition: 0.3s; background: #2c3e50; color: white;
+        }
+        .btn:hover { background: var(--gold); color: black; }
+        .btn-gold { background: var(--gold); color: black; }
+        input { padding: 12px; width: 280px; border-radius: 8px; border: 1px solid var(--gold); background: #222; color: white; text-align: center; }
+
+        /* ВЕРХНЯ ПАНЕЛЬ */
+        .top-bar {
+            width: 100%; background: #252525; padding: 15px 0;
+            display: flex; justify-content: space-around; align-items: center;
+            border-bottom: 3px solid var(--gold);
+        }
+        .chessy-count { font-size: 24px; color: var(--gold); font-weight: bold; }
+
+        /* ІГРОВА ЗОНА */
+        .game-wrapper { display: flex; gap: 30px; padding: 20px; flex-wrap: wrap; justify-content: center; }
+        
+        #board { 
+            display: grid; grid-template-columns: repeat(8, var(--cell)); 
+            grid-template-rows: repeat(8, var(--cell));
+            border: 5px solid #333; position: relative;
+        }
+        .cell { width: var(--cell); height: var(--cell); display: flex; justify-content: center; align-items: center; font-size: 45px; cursor: pointer; position: relative; }
+        .cell.w { background: var(--white); }
+        .cell.b { background: var(--black); }
+        .cell.selected { background: #f1c40f !important; }
+
+        /* АНІМАЦІЯ ТА ПІДКАЗКИ */
+/* Оновлений стиль фігур */
+.piece { 
+    transition: all 0.25s cubic-bezier(0.175, 0.885, 0.32, 1.275); 
+    user-select: none; 
+    z-index: 10;
+    font-size: 55px; /* Збільшено розмір */
+    cursor: grab;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    width: 100%;
+    height: 100%;
+}
+
+/* Білі фігури: яскраві з темним контуром */
+.piece.white-p {
+    color: #ffffff;
+    filter: drop-shadow(2px 2px 2px rgba(0,0,0,0.5));
+    -webkit-text-stroke: 1px #000;
+}
+
+/* Чорні фігури: темні з золотистим або світлим контуром */
+.piece.black-p {
+    color: #222222;
+    filter: drop-shadow(1px 1px 1px rgba(255,255,255,0.2));
+    -webkit-text-stroke: 1px #fff;
+}
+
+.piece:active { cursor: grabbing; }
+
+.piece.lifted { 
+    transform: translateY(-12px) scale(1.2); 
+    filter: drop-shadow(0 20px 15px rgba(0,0,0,0.6)); 
+}
+
+        .cell .hint-dot {
+            width: 18px; height: 18px;
+            background: rgba(46, 204, 113, 0.6);
+            border-radius: 50%;
+            position: absolute; z-index: 1;
+        }
+
+        .cell.can-capture { box-shadow: inset 0 0 15px rgba(231, 76, 60, 0.8); }
+
+        /* КВЕСТИ */
+        .quest-list { width: 320px; background: #252525; padding: 20px; border-radius: 12px; }
+        .q-item { 
+            background: #333; padding: 12px; margin-bottom: 10px; border-radius: 6px;
+            border-left: 4px solid var(--gold); font-size: 14px;
+        }
+        .q-item.done { opacity: 0.5; text-decoration: line-through; border-left-color: #2ecc71; }
+        #id-display { color: var(--gold); font-family: monospace; font-size: 20px; margin: 10px 0; }
+    </style>
+</head>
+<body>
+
+    <div id="main-menu">
+        <h1 style="color:var(--gold); font-size: 40px; margin-bottom: 10px;">CHESSY WORLD</h1>
+        <div style="text-align: center; margin-bottom: 10px;">
+            <p style="margin:0">Твій 16-значний ID:</p>
+            <div id="id-display">Завантаження...</div>
+        </div>
+        <button class="btn" onclick="startBot('easy')">Грати з БОТОМ (Easy)</button>
+        <button class="btn" onclick="startBot('medium')">Грати з БОТОМ (Medium)</button>
+        <button class="btn" onclick="startBot('hard')">Грати з БОТОМ (Hard)</button>
+        <div style="height: 20px;"></div>
+        <input type="text" id="target-id" placeholder="Введіть ID суперника">
+        <button class="btn btn-gold" onclick="connectToPlayer()">Грати з ЛЮДИНОЮ</button>
+    </div>
+
+    <div class="top-bar">
+        <div class="chessy-count">🪙 Chessy: <span id="balance">0</span></div>
+        <div id="status">Твій хід</div>
+        <button onclick="location.reload()" style="padding: 5px 15px; cursor:pointer;">В меню</button>
+    </div>
+
+    <div class="game-wrapper">
+        <div id="board"></div>
+        <div class="quest-list">
+            <h3 style="margin:0 0 15px 0; color:var(--gold)">Квести (12 год)</h3>
+            <div id="quests-container"></div>
+        </div>
+    </div>
+
+<script>
+    const PIECES = {
+        'w': { 'p': '♙', 'r': '♖', 'n': '♘', 'b': '♗', 'q': '♕', 'k': '♔' },
+        'b': { 'p': '♟', 'r': '♜', 'n': '♞', 'b': '♝', 'q': '♛', 'k': '♚' }
+    };
+    
+    let boardState = [];
+    let selectedSq = null;
+    let playerColor = 'w';
+    let currentTurn = 'w';
+    let mode = 'bot';
+    let aiDepth = 1;
+    let balance = parseInt(localStorage.getItem('chessy')) || 0;
+    let quests = [];
+
+    // --- ЛОГІКА ХОДІВ ---
+    function getValidMoves(r, c, state) {
+        const piece = state[r][c];
+        if (!piece) return [];
+        const color = piece[0];
+        const type = piece[1];
+        const moves = [];
+        const isEnemy = (tr, tc) => state[tr] && state[tr][tc] && state[tr][tc][0] !== color;
+        const isEmpty = (tr, tc) => state[tr] && state[tr][tc] === null;
+
+        if (type === 'p') {
+            const dir = color === 'w' ? -1 : 1;
+            if (isEmpty(r + dir, c)) {
+                moves.push({r: r + dir, c: c});
+                if ((color === 'w' && r === 6 || color === 'b' && r === 1) && isEmpty(r + 2 * dir, c)) moves.push({r: r + 2 * dir, c: c});
+            }
+            [[dir, 1], [dir, -1]].forEach(off => { if (isEnemy(r + off[0], c + off[1])) moves.push({r: r + off[0], c: c + off[1]}); });
+        }
+        if (type === 'n') {
+            [[2,1],[2,-1],[-2,1],[-2,-1],[1,2],[1,-2],[-1,2],[-1,-2]].forEach(o => {
+                const tr = r + o[0], tc = c + o[1];
+                if (state[tr] !== undefined && (isEmpty(tr, tc) || isEnemy(tr, tc))) moves.push({r: tr, c: tc});
+            });
+        }
+        if (['r', 'b', 'q'].includes(type)) {
+            const dirs = [];
+            if (type !== 'b') dirs.push([0,1],[0,-1],[1,0],[-1,0]);
+            if (type !== 'r') dirs.push([1,1],[1,-1],[-1,1],[-1,-1]);
+            dirs.forEach(d => {
+                let tr = r + d[0], tc = c + d[1];
+                while (state[tr] !== undefined && state[tr][tc] !== undefined) {
+                    if (isEmpty(tr, tc)) moves.push({r: tr, c: tc});
+                    else { if (isEnemy(tr, tc)) moves.push({r: tr, c: tc}); break; }
+                    tr += d[0]; tc += d[1];
+                }
+            });
+        }
+        if (type === 'k') {
+            for (let i = -1; i <= 1; i++) {
+                for (let j = -1; j <= 1; j++) {
+                    if (i === 0 && j === 0) continue;
+                    const tr = r + i, tc = c + j;
+                    if (state[tr] !== undefined && (isEmpty(tr, tc) || isEnemy(tr, tc))) moves.push({r: tr, c: tc});
+                }
+            }
+        }
+        return moves;
+    }
+
+    // --- AI (MINIMAX) ---
+    function evaluateBoard(state) {
+        const weights = { p: 10, n: 30, b: 30, r: 50, q: 90, k: 900 };
+        let score = 0;
+        for (let r = 0; r < 8; r++) {
+            for (let c = 0; c < 8; c++) {
+                if (state[r][c]) {
+                    const val = weights[state[r][c][1]];
+                    score += (state[r][c][0] === 'w' ? val : -val);
+                }
+            }
+        }
+        return score;
+    }
+
+    function minimax(state, depth, isMaximizing) {
+        if (depth === 0) return evaluateBoard(state);
+        const turn = isMaximizing ? 'w' : 'b';
+        const moves = [];
+        for(let r=0; r<8; r++) {
+            for(let c=0; c<8; c++) {
+                if(state[r][c] && state[r][c][0] === turn) {
+                    getValidMoves(r, c, state).forEach(m => moves.push({fR:r, fC:c, tR:m.r, tC:m.c}));
+                }
+            }
+        }
+        if (isMaximizing) {
+            let best = -9999;
+            moves.forEach(m => {
+                const ns = JSON.parse(JSON.stringify(state));
+                ns[m.tR][m.tC] = ns[m.fR][m.fC]; ns[m.fR][m.fC] = null;
+                best = Math.max(best, minimax(ns, depth - 1, false));
+            });
+            return best;
+        } else {
+            let best = 9999;
+            moves.forEach(m => {
+                const ns = JSON.parse(JSON.stringify(state));
+                ns[m.tR][m.tC] = ns[m.fR][m.fC]; ns[m.fR][m.fC] = null;
+                best = Math.min(best, minimax(ns, depth - 1, true));
+            });
+            return best;
+        }
+    }
+
+    function getBestMove(state) {
+        let moves = [];
+        for(let r=0; r<8; r++) {
+            for(let c=0; c<8; c++) {
+                if(state[r][c] && state[r][c][0] === currentTurn) {
+                    getValidMoves(r, c, state).forEach(m => moves.push({fR:r, fC:c, tR:m.r, tC:m.c}));
+                }
+            }
+        }
+        let bestMove = moves[Math.floor(Math.random() * moves.length)];
+        let bestVal = currentTurn === 'w' ? -9999 : 9999;
+        moves.forEach(m => {
+            const ns = JSON.parse(JSON.stringify(state));
+            ns[m.tR][m.tC] = ns[m.fR][m.fC]; ns[m.fR][m.fC] = null;
+            let val = minimax(ns, aiDepth - 1, currentTurn === 'b');
+            if (currentTurn === 'w' ? val > bestVal : val < bestVal) { bestVal = val; bestMove = m; }
+        });
+        return bestMove;
+    }
+
+    // --- КВЕСТИ ---
+    const QUEST_TEMPLATES = [
+        { id: 'play', text: 'Зіграти партій', goals: [1, 3, 5], rewards: [30, 50, 150] },
+        { id: 'p', text: 'Убити пішаків', goals: [5, 10, 20], rewards: [30, 50, 100] },
+        { id: 'minor', text: 'Убити коней/слонів/ладь', goals: [5, 10, 20], rewards: [50, 100, 250] },
+        { id: 'q', text: 'Убити ферзей', goals: [1, 2, 3, 5], rewards: [50, 90, 120, 300] }
+    ];
+
+    function initQuests() {
+        const saved = localStorage.getItem('chess_quests_data');
+        const lastUpdate = localStorage.getItem('quest_time_stamp');
+        if (saved && lastUpdate && Date.now() - lastUpdate < 12 * 60 * 60 * 1000) {
+            quests = JSON.parse(saved);
+        } else {
+            quests = [];
+            let pool = [...QUEST_TEMPLATES].sort(() => 0.5 - Math.random());
+            for(let i=0; i<5; i++) {
+                let t = pool[i % pool.length];
+                let gIdx = Math.floor(Math.random() * t.goals.length);
+                quests.push({ type: t.id, text: `${t.text} (${t.goals[gIdx]})`, goal: t.goals[gIdx], cur: 0, reward: t.rewards[gIdx], done: false });
+            }
+            localStorage.setItem('quest_time_stamp', Date.now());
+            saveQuests();
+        }
+        renderQuests();
+    }
+
+    function updateQuest(type, amt) {
+        if (mode === 'bot' && aiDepth < 3 && type !== 'play') return;
+        quests.forEach(q => { if (q.type === type && !q.done) { q.cur += amt; if (q.cur >= q.goal) { q.done = true; addMoney(q.reward); } } });
+        saveQuests();
+    }
+
+    function addMoney(amt) { balance += amt; localStorage.setItem('chessy', balance); renderQuests(); }
+    function saveQuests() { localStorage.setItem('chess_quests_data', JSON.stringify(quests)); renderQuests(); }
+    function renderQuests() {
+        document.getElementById('balance').innerText = balance;
+        document.getElementById('quests-container').innerHTML = quests.map(q => `<div class="q-item ${q.done ? 'done' : ''}"><b>${q.text}</b><br>Прогрес: ${q.cur}/${q.goal} | Нагорода: ${q.reward}</div>`).join('');
+    }
+
+    // --- ГРА ---
+    function initBoard() {
+        boardState = [
+            ['br','bn','bb','bq','bk','bb','bn','br'],
+            ['bp','bp','bp','bp','bp','bp','bp','bp'],
+            Array(8).fill(null), Array(8).fill(null), Array(8).fill(null), Array(8).fill(null),
+            ['wp','wp','wp','wp','wp','wp','wp','wp'],
+            ['wr','wn','wb','wq','wk','wb','wn','wr']
+        ];
+        renderBoard();
+    }
+
+    function renderBoard(hints = []) {
+        const boardEl = document.getElementById('board');
+        boardEl.innerHTML = '';
+        for(let r=0; r<8; r++) {
+            for(let c=0; c<8; c++) {
+                const cell = document.createElement('div');
+                cell.className = `cell ${(r+c)%2===0?'w':'b'}`;
+                if (selectedSq?.r === r && selectedSq?.c === c) cell.classList.add('selected');
+                
+                const p = boardState[r][c];
+                const hint = hints.find(h => h.r === r && h.c === c);
+
+                if (hint) {
+                    if (p) cell.classList.add('can-capture');
+                    else { const dot = document.createElement('div'); dot.className = 'hint-dot'; cell.appendChild(dot); }
+                }
+
+                if(p) {
+    const pDiv = document.createElement('div');
+    // Визначаємо колір фігури для класу
+    const colorClass = p[0] === 'w' ? 'white-p' : 'black-p';
+    
+    pDiv.className = `piece ${colorClass} ${selectedSq?.r === r && selectedSq?.c === c ? 'lifted' : ''}`;
+    pDiv.innerHTML = PIECES[p[0]][p[1]];
+    cell.appendChild(pDiv);
+}
+                cell.onclick = () => handleSquareClick(r, c);
+                boardEl.appendChild(cell);
+            }
+        }
+    }
+
+    function handleSquareClick(r, c) {
+        if (currentTurn !== playerColor) return;
+        const p = boardState[r][c];
+
+        if (p && p[0] === playerColor) {
+            selectedSq = {r, c};
+            const moves = getValidMoves(r, c, boardState);
+            renderBoard(moves);
+        } else if (selectedSq) {
+            const moves = getValidMoves(selectedSq.r, selectedSq.c, boardState);
+            if (moves.some(m => m.r === r && m.c === c)) {
+                executeMove(selectedSq.r, selectedSq.c, r, c);
+            }
+            selectedSq = null;
+            renderBoard();
+        }
+    }
+
+    function executeMove(fR, fC, tR, tC) {
+        const target = boardState[tR][tC];
+        if (target) {
+            let cat = target[1];
+            if (['r','n','b'].includes(cat)) cat = 'minor';
+            updateQuest(cat, 1);
+            if (target[1] === 'k') { alert("Мат!"); updateQuest('play', 1); location.reload(); }
+        }
+        boardState[tR][tC] = boardState[fR][fC];
+        boardState[fR][fC] = null;
+        currentTurn = currentTurn === 'w' ? 'b' : 'w';
+        if (mode === 'pvp' && conn) conn.send({ board: boardState, turn: currentTurn });
+        document.getElementById('status').innerText = currentTurn === playerColor ? "Твій хід" : "Очікування...";
+        renderBoard();
+        if (mode === 'bot' && currentTurn !== playerColor) setTimeout(() => {
+            const m = getBestMove(boardState);
+            if(m) executeMove(m.fR, m.fC, m.tR, m.tC);
+        }, 600);
+    }function executeMove(fR, fC, tR, tC) {
+    const piece = boardState[fR][fC];
+    const target = boardState[tR][tC];
+
+    // 1. Механіка квестів та взяття
+    if (target) {
+        let cat = target[1];
+        if (['r','n','b'].includes(cat)) cat = 'minor';
+        updateQuest(cat, 1);
+        if (target[1] === 'k') { 
+            alert("Мат! Ви перемогли."); 
+            updateQuest('play', 1); 
+            location.reload(); 
+            return;
+        }
+    }
+
+    // 2. Виконуємо хід
+    boardState[tR][tC] = piece;
+    boardState[fR][fC] = null;
+
+    // 3. ПЕРЕТВОРЕННЯ ПІШАКА (Promotion)
+    // Якщо білий пішак на 0-й лінії або чорний на 7-й
+    if (piece[1] === 'p') {
+        if ((piece[0] === 'w' && tR === 0) || (piece[0] === 'b' && tR === 7)) {
+            boardState[tR][tC] = piece[0] + 'q'; // Автоматично стає ферзем (Queen)
+            alert("Ваш пішак став Ферзем!");
+        }
+    }
+
+    // 4. ПЕРЕВІРКА НА ПАТ / НІЧИЮ (Тільки 2 королі)
+    if (checkInsufficientMaterial()) {
+        alert("Нічия: Недостатньо фігур для мату (залишились лише королі)!");
+        location.reload();
+        return;
+    }
+
+    // Завершення ходу
+    currentTurn = currentTurn === 'w' ? 'b' : 'w';
+    if (mode === 'pvp' && conn) conn.send({ board: boardState, turn: currentTurn });
+    
+    document.getElementById('status').innerText = currentTurn === playerColor ? "Твій хід" : "Очікування...";
+    renderBoard();
+
+    if (mode === 'bot' && currentTurn !== playerColor) {
+        setTimeout(() => {
+            const m = getBestMove(boardState);
+            if(m) executeMove(m.fR, m.fC, m.tR, m.tC);
+        }, 600);
+    }
+}
+
+// Допоміжна функція для перевірки нічиєї
+function checkInsufficientMaterial() {
+    let pieces = [];
+    for (let r = 0; r < 8; r++) {
+        for (let c = 0; c < 8; c++) {
+            if (boardState[r][c]) pieces.push(boardState[r][c]);
+        }
+    }
+    // Якщо залишилося лише 2 фігури (це автоматично 2 королі, бо королів не можна з'їсти)
+    return pieces.length === 2;
+}
+
+    // --- PEER ---
+    let myPeerId = "";
+    function initMultiplayer() {
+        myPeerId = Array.from({length:16}, () => Math.floor(Math.random()*10)).join('');
+        document.getElementById('id-display').innerText = myPeerId;
+        peer = new Peer(myPeerId);
+        peer.on('connection', (c) => {
+            conn = c; playerColor = 'b'; mode = 'pvp'; setupConn();
+            document.getElementById('main-menu').style.display = 'none'; initBoard();
+        });
+    }
+    function connectToPlayer() {
+        const tid = document.getElementById('target-id').value;
+        if (tid.length !== 16) return alert("ID має бути 16 цифр");
+        conn = peer.connect(tid); playerColor = 'w'; mode = 'pvp'; setupConn();
+        document.getElementById('main-menu').style.display = 'none'; initBoard();
+    }
+    function setupConn() {
+        conn.on('data', (data) => {
+            boardState = data.board; currentTurn = data.turn; renderBoard();
+            document.getElementById('status').innerText = currentTurn === playerColor ? "Твій хід" : "Хід суперника";
+        });
+    }
+    function startBot(diff) {
+        aiDepth = diff === 'easy' ? 1 : diff === 'medium' ? 2 : 3;
+        playerColor = Math.random() > 0.5 ? 'w' : 'b'; mode = 'bot';
+        document.getElementById('main-menu').style.display = 'none'; initBoard();
+        if (playerColor === 'b') setTimeout(() => { const m = getBestMove(boardState); if(m) executeMove(m.fR, m.fC, m.tR, m.tC); }, 600);
+    }
+
+    initMultiplayer();
+    initQuests();
+</script>
+</body>
+</html>
